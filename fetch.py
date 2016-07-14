@@ -35,9 +35,8 @@ def fetch_all_congressmen():
     return response.content
 
 
-# set sigla=PL for projetos de lei
 def fetch_cm_proposals(cm_name, cm_party, cm_state, start_date, end_date):
-    payload = {'sigla': 'PL',
+    payload = {'sigla': '',  # Set this to 'PL' to retrieve only Law Proposals
                'numero': '',
                'ano': '',
                'datApresentacaoIni': start_date,
@@ -82,58 +81,81 @@ def fetch_cm_speeches(cm_name, cm_party, cm_state, start_date, end_date):
         logging.warning('Could not GET data')
     return response.content
 
-# Get all congressmen information
 
-deputados = dict()
-try:
-    obj = untangle.parse(fetch_all_congressmen())
-    for dep in obj.deputados.deputado:
-        deputados[dep.nomeParlamentar.cdata] = dict()
-        deputados[dep.nomeParlamentar.cdata]['nome'] = dep.nome.cdata
-        deputados[dep.nomeParlamentar.cdata]['urlFoto'] = dep.urlFoto.cdata
-        deputados[dep.nomeParlamentar.cdata]['uf'] = dep.uf.cdata
-        deputados[dep.nomeParlamentar.cdata]['partido'] = dep.partido.cdata
-        deputados[dep.nomeParlamentar.cdata]['fone'] = dep.fone.cdata
-        deputados[dep.nomeParlamentar.cdata]['email'] = dep.email.cdata
-        # FIXME: DEBUG
-        #print dep.nomeParlamentar.cdata
-except IndexError as e:
-    logging.warning(e)
-
-# Get all proposals for each congressman
-for dep in deputados:
+def get_cm_dict():
+    deputados = dict()
     try:
-        # set sigla=PL for projetos de lei
-        obj = untangle.parse(fetch_cm_proposals(dep, deputados[dep]['partido'], deputados[dep]['uf'], '05/07/2016', '12/07/2016'))
-        for prop in obj.proposicoes.proposicao:
-            deputados[dep]['proposicoes'] = dict()
-            deputados[dep]['proposicoes'][prop.id.cdata] = dict()
-
-            # Get proposal keywords and text
-            try:
-                obj2 = untangle.parse(fetch_proposal_by_id(prop.id.cdata))
-                deputados[dep]['proposicoes'][prop.id.cdata]['key words'] = obj2.proposicao.Indexacao.cdata
-                # FIXME: DEBUG 2
-                # print obj2.proposicao.Indexacao.cdata
-
-            except IndexError as e:
-                logging.warning(e)
-
-    except Exception as e:
-        logging.warning("'%s'\n\tfor: %s" % (e, dep))
-
-# Get all speeches for each congressman
-for dep in deputados:
-    try:
-        obj = untangle.parse(fetch_cm_speeches(dep, deputados[dep]['partido'], deputados[dep]['uf'], '05/07/2016', '12/07/2016'))
-        for session in obj.sessoesDiscursos.sessao:
-            for phase in session.fasesSessao.faseSessao:
-                for speech in phase.discursos.discurso:
-                    deputados[dep]['discursos'] = []
-                    deputados[dep]['discursos'].append(speech.txtIndexacao.cdata)
-
-    except Exception as e:
+        obj = untangle.parse(fetch_all_congressmen())
+        for dep in obj.deputados.deputado:
+            deputados[dep.nomeParlamentar.cdata] = dict()
+            deputados[dep.nomeParlamentar.cdata]['nome'] = dep.nome.cdata
+            deputados[dep.nomeParlamentar.cdata]['urlFoto'] = dep.urlFoto.cdata
+            deputados[dep.nomeParlamentar.cdata]['uf'] = dep.uf.cdata
+            deputados[dep.nomeParlamentar.cdata]['partido'] = dep.partido.cdata
+            deputados[dep.nomeParlamentar.cdata]['fone'] = dep.fone.cdata
+            deputados[dep.nomeParlamentar.cdata]['email'] = dep.email.cdata
+            deputados[dep.nomeParlamentar.cdata]['proposicoes'] = []
+            deputados[dep.nomeParlamentar.cdata]['discursos'] = []
+    except IndexError as e:
         logging.warning(e)
 
-with open('data.json', 'w') as outfile:
-    json.dump(deputados, outfile, ensure_ascii=False)
+    return deputados
+
+
+def get_proposals(deputados, start_date, end_date):
+    """
+    Retrieve proposals and append to congressmen dict.
+    Dates must be in DD/MM/YYYY format
+    """
+    for dep in deputados:
+        try:
+            obj = untangle.parse(fetch_cm_proposals(dep,
+                                                    deputados[dep]['partido'],
+                                                    deputados[dep]['uf'],
+                                                    start_date,
+                                                    end_date))
+            for prop in obj.proposicoes.proposicao:
+
+                # Get proposal keywords and text
+                try:
+                    obj2 = untangle.parse(fetch_proposal_by_id(prop.id.cdata))
+                    deputados[dep]['proposicoes'].append(obj2.proposicao.
+                                                         Indexacao.cdata)
+                except IndexError as e:
+                    logging.warning(e)
+
+        except Exception as e:
+            logging.warning("'%s'\n\tfor: %s" % (e, dep))
+
+
+def get_speeches(deputados, start_date, end_date):
+    """
+    Retrieve speeches and append to congressmen dict.
+    Note that API only allows retrieving 360 days of speeches.
+    Dates must be in DD/MM/YYYY format
+    """
+    for dep in deputados:
+        try:
+            obj = untangle.parse(fetch_cm_speeches(dep,
+                                 deputados[dep]['partido'],
+                                 deputados[dep]['uf'],
+                                 start_date,
+                                 end_date))
+            for session in obj.sessoesDiscursos.sessao:
+                for phase in session.fasesSessao.faseSessao:
+                    for speech in phase.discursos.discurso:
+                        deputados[dep]['discursos'].append(speech.
+                                                           txtIndexacao.cdata)
+
+        except Exception as e:
+            logging.warning(e)
+
+
+def to_json(deputados, filename):
+    with open(filename, 'w') as outfile:
+        json.dump(deputados, outfile, ensure_ascii=False)
+
+congressmen = get_cm_dict()
+get_proposals(congressmen, '05/07/2016', '12/07/2016')
+get_speeches(congressmen, '05/07/2016', '12/07/2016')
+to_json(congressmen, 'data.json')
