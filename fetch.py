@@ -154,6 +154,6 @@ def to_json(congressmen, filename):
         json.dump(congressmen, outfile, ensure_ascii=False)
 
 congressmen = get_cm_dict()
-# get_proposals(congressmen, '05/07/2016', '12/07/2016')
+get_proposals(congressmen, '05/07/2016', '12/07/2016')
 get_speeches(congressmen, '05/07/2016', '12/07/2016')
 to_json(congressmen, 'data.json')
