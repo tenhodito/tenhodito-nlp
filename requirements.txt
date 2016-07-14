@@ -1,0 +1,6 @@
+json
+numpy
+sklearn
+requests
+untangle
+scipy
