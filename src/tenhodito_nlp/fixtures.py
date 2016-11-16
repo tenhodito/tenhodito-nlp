@@ -35,7 +35,7 @@ def strip_punctuation(word):
     Remove punctuation from the end of word.
     """
 
-    return word.rstrip('.,:;?!')
+    return word.rstrip('.,:;?!)]}-%#/\\')
 
 
 def stemize(text, stop_words=None):
@@ -131,7 +131,11 @@ def similarity(u, v, method='triangular'):
     if method == 'angle':
         return (cos_angle(u, v) + 1) / 2
     elif method == 'triangular':
-        return 1 - norm(u - v) / (norm(u) + norm(v))
+        norm_u = norm(u)
+        norm_v = norm(v)
+        if norm_u == norm_v == 0:
+            return 1.0
+        return 1 - norm(u - v) / (norm_u + norm_v)
     else:
         raise ValueError('invalid similarity method: %r' % method)
 
@@ -407,6 +411,31 @@ def kmeans(job, k, whiten=True):
     centroids, labels = scipy.cluster.vq.kmeans2(data, k, minit='points')
     centroids *= std
     return centroids, labels
+
+
+class DeputyTexts:
+    """
+    Collect discourses and proposals from a deputy.
+    """
+    @property
+    def proposal_text(self):
+        return '\n\n'.join(self.proposals)
+
+    @property
+    def discourse_text(self):
+        return '\n\n'.join(self.discourses)
+
+    def __init__(self, name):
+        self.name = name
+        self.discourses = []
+        self.proposals = []
+
+    def add_discourse(self, discourse):
+        self.discourses.append(discourse)
+
+    def add_proposal(self, proposal):
+        self.proposals.append(proposal)
+
 
 
 data = [fake_text(10) for _ in range(10)]
