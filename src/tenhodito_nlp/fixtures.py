@@ -1,3 +1,4 @@
+import shelve
 from Stemmer import Stemmer
 from collections import Counter, UserString
 from math import log, sqrt
@@ -7,6 +8,7 @@ import scipy
 import stop_words
 from faker import Factory
 from lazyutils import lazy
+from pygov_br.camara_deputados import cd as camara_br
 from scipy.cluster.vq import whiten
 
 fake = Factory.create(locale='pt-br')
@@ -48,7 +50,7 @@ def stemize(text, stop_words=None):
     stop_stems = set(stemmer.stemWords(stop_words))
     words = text.casefold().split()
     words = stemmer.stemWords([strip_punctuation(word) for word in words])
-    return [w for w in words if w not in stop_stems]
+    return [w for w in words if w and w not in stop_stems]
 
 
 def _force_stemize(data):
@@ -417,6 +419,7 @@ class DeputyTexts:
     """
     Collect discourses and proposals from a deputy.
     """
+
     @property
     def proposal_text(self):
         return '\n\n'.join(self.proposals)
@@ -430,26 +433,88 @@ class DeputyTexts:
         self.discourses = []
         self.proposals = []
 
+    def __repr__(self):
+        return '%s(%r)' % (type(self).__name__, self.name)
+
     def add_discourse(self, discourse):
-        self.discourses.append(discourse)
+        """
+        Add a new discourse text string.
+        """
+
+        if discourse not in self.discourses:
+            self.discourses.append(discourse)
 
     def add_proposal(self, proposal):
-        self.proposals.append(proposal)
+        """
+        Add a new proposal text string.
+        """
+
+        if proposal not in self.proposals:
+            self.proposals.append(proposal)
 
 
 
-data = [fake_text(10) for _ in range(10)]
-job = NLPJob(data)
-print(job.document_frequency())
-print(job.similarity_matrix())
-print()
+class DiscourseMiner:
+    def __init__(self):
+        self._db = shelve.open('discourse.db')
 
-s = job.similarity_matrix()
-print(s.max(), s.min())
+    def session_list(self):
+        """
+        Return a list of session codes.
+        """
 
-centroids, labels = kmeans(job, 3)
-a, b, c = centroids
-print(similarity(a, b))
-print(similarity(a, c))
-print(similarity(b, c))
-print(job.common_words(20, by_document=True))
+    def read_date(self, start, end=None):
+        """
+        Read all discourses in the given interval
+        """
+
+        if end is None:
+            end = start
+        speeches = camara_br.sessions.speeches(start, end)
+        for speech in speeches:pass
+            cod_session = speech['codigo']
+            speech_list = speech['fasesSessao']['faseSessao']['discursos']\
+                ['discurso']
+            for speech in speech_list:
+                insertion = speech['numeroInsercao']
+                room = speech['numeroQuarto']
+                name = speech['orador']['nome']
+                order = speech['orador']['numero']
+                full_speech = camara_br.sessions.full_speech(cod_session, order,
+                                                             room, insertion)
+                discourse = full_speech['discurso']
+                print(name)
+                self.add_discourse(name, discourse)
+
+    def deputy(self, name):
+        """
+        Return deputy with the given name.
+        """
+
+        try:
+            return self._db[name]
+        except KeyError:
+            self._db[name] = deputy = DeputyTexts(name)
+            return deputy
+
+    def deputies(self):
+        return [key for key in self._db if not key.startswith('__')]
+
+    def add_discourse(self, deputy_name, discourse):
+        """
+        Add a new discourse for the given deputy.
+        """
+
+        deputy = self.deputy(deputy_name)
+        deputy.add_discourse(discourse)
+
+    def sync(self):
+        """
+        Synchronize dababase.
+        """
+
+        self._db.sync()
+
+miner = DiscourseMiner()
+miner.read_date('8/11/2016')
+print(miner.deputies())
