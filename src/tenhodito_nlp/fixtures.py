@@ -1,3 +1,5 @@
+import datetime
+import pprint
 import shelve
 from Stemmer import Stemmer
 from collections import Counter, UserString
@@ -8,6 +10,8 @@ import scipy
 import stop_words
 from faker import Factory
 from lazyutils import lazy
+
+# noinspection PyUnresolvedReferences
 from pygov_br.camara_deputados import cd as camara_br
 from scipy.cluster.vq import whiten
 
@@ -40,9 +44,17 @@ def strip_punctuation(word):
     return word.rstrip('.,:;?!)]}-%#/\\')
 
 
-def stemize(text, stop_words=None):
+def stemize(text, stop_words=None, ngrams=1):
     """
     Receive a string of text and return a list of stems.
+
+    Args:
+        text (str):
+            A string of text to stemize.
+        stop_words (list):
+            List of stop words.
+        ngrams (int):
+            If given, uses n-grams instead of words.
     """
 
     if stop_words is None:
@@ -50,7 +62,15 @@ def stemize(text, stop_words=None):
     stop_stems = set(stemmer.stemWords(stop_words))
     words = text.casefold().split()
     words = stemmer.stemWords([strip_punctuation(word) for word in words])
-    return [w for w in words if w and w not in stop_stems]
+    data = [w for w in words if w and w not in stop_stems]
+    if ngrams == 1:
+        return data
+    else:
+        result = []
+        for i in range(len(data) - ngrams + 1):
+            words = data[i:i + ngrams]
+            result.append(' '.join(words))
+        return result
 
 
 def _force_stemize(data):
@@ -169,11 +189,12 @@ class Text(UserString):
     def bow(self):
         return self.bag_of_words(self.method)
 
-    def __init__(self, data, method=None, stop_words=stop_words):
+    def __init__(self, data, method=None, stop_words=DEFAULT_STOP_WORDS,
+                 ngrams=1, weights=None):
         super().__init__(data)
-        self.stems = stemize(data, stop_words=stop_words)
-        self.weights = None
-        self.method = None
+        self.stems = stemize(data, stop_words=stop_words, ngrams=ngrams)
+        self.weights = weights
+        self.method = method
 
     def __repr__(self):
         data = self.data
@@ -231,7 +252,7 @@ class NLPJob:
     def method(self, value):
         self._update_method(value)
 
-    def __init__(self, texts=(), method='weighted', stop_words=None):
+    def __init__(self, texts=(), method='weighted', stop_words=None, ngrams=1):
         self._texts = [Text(data, stop_words=stop_words) for data in texts]
         self._method = method
         self._update_method(method)
@@ -414,6 +435,19 @@ def kmeans(job, k, whiten=True):
     centroids *= std
     return centroids, labels
 
+_cached_full_speech_db = shelve.open('full-speech.db')
+
+
+def _cached_full_speech(*args):
+    key = '::'.join(map(str, args))
+    try:
+        return _cached_full_speech_db[key]
+    except KeyError:
+        value = camara_br.sessions.full_speech(*args)
+        _cached_full_speech_db[key] = value
+        _cached_full_speech_db.sync()
+        return value
+
 
 class DeputyTexts:
     """
@@ -453,38 +487,103 @@ class DeputyTexts:
             self.proposals.append(proposal)
 
 
+def to_string_date(date):
+    """
+    Convert date to format DD/MM/YYYY
+    """
+
+    if isinstance(date, (datetime.date, datetime.datetime)):
+        return '%s/%s/%s' % (date.day, date.month, date.year)
+    return date
+
+
+def to_date(date):
+    """
+    Return date to datetime.date object.
+    """
+
+    if isinstance(date, datetime.date):
+        return date
+    elif date is None:
+        return datetime.date.today()
+    else:
+        dd, mm, yyyy = map(int, date.split('/'))
+        return datetime.date(yyyy, mm, dd)
+
 
 class DiscourseMiner:
+    """
+    Extract deputy discourses.
+    """
+
     def __init__(self):
-        self._db = shelve.open('discourse.db')
+        self._speeches_by_date = shelve.open('speeches_by_date.db')
+        self._deputies = {}
+
+    def _dbg(self, *args):
+        """
+        Print debug message
+        """
+
+        print(*args)
 
     def session_list(self):
         """
         Return a list of session codes.
         """
 
-    def read_date(self, start, end=None):
+    def read_date(self, date):
         """
-        Read all discourses in the given interval
+        Read all discourses in the given date
         """
 
-        if end is None:
-            end = start
-        speeches = camara_br.sessions.speeches(start, end)
-        for speech in speeches:pass
-            cod_session = speech['codigo']
-            speech_list = speech['fasesSessao']['faseSessao']['discursos']\
-                ['discurso']
-            for speech in speech_list:
-                insertion = speech['numeroInsercao']
-                room = speech['numeroQuarto']
-                name = speech['orador']['nome']
-                order = speech['orador']['numero']
-                full_speech = camara_br.sessions.full_speech(cod_session, order,
-                                                             room, insertion)
-                discourse = full_speech['discurso']
-                print(name)
-                self.add_discourse(name, discourse)
+        date = to_string_date(date)
+        try:
+            data = self._speeches_by_date[date]
+        except KeyError:
+            data = []
+            result = camara_br.sessions.speeches(date, date)
+            for api_point in result:
+                cod_session = api_point['codigo']
+                speech_list = api_point['fasesSessao']['faseSessao']
+                speech_list = speech_list['discursos']['discurso']
+
+                if isinstance(speech_list, dict):
+                    speech_list = [speech_list]
+
+                new_list = []
+                for speech in speech_list:
+                    insertion = speech['numeroInsercao']
+                    room = speech['numeroQuarto']
+                    name = speech['orador']['nome']
+                    order = speech['orador']['numero']
+                    new_list.append((name, cod_session, order, room, insertion))
+
+                for elem in new_list:
+                    name, cod_session, order, room, insertion = elem
+                    full = _cached_full_speech
+                    full_speech = full(cod_session, order, room, insertion)
+                    discourse = full_speech['discurso']
+                    data.append((name, discourse))
+                    self._dbg('fetch discourse: %s (%s)' % (name, date))
+
+            self._speeches_by_date[date] = data
+            self._speeches_by_date.sync()
+
+        for name, discourse in data:
+            self.add_discourse(name, discourse)
+
+    def read_interval(self, start, end=None):
+        """
+        Read all discourses in the given interval.
+        """
+
+        start, end = map(to_date, (start, end))
+        days = (end - start).days
+        day = datetime.timedelta(days=1)
+        for diff in range(days + 1):
+            date = start + day * diff
+            self.read_date(date)
 
     def deputy(self, name):
         """
@@ -492,13 +591,17 @@ class DiscourseMiner:
         """
 
         try:
-            return self._db[name]
+            return self._deputies[name]
         except KeyError:
-            self._db[name] = deputy = DeputyTexts(name)
+            self._deputies[name] = deputy = DeputyTexts(name)
             return deputy
 
     def deputies(self):
-        return [key for key in self._db if not key.startswith('__')]
+        """
+        Return a list of deputies.
+        """
+
+        return list(self._deputies.values())
 
     def add_discourse(self, deputy_name, discourse):
         """
@@ -510,11 +613,12 @@ class DiscourseMiner:
 
     def sync(self):
         """
-        Synchronize dababase.
+        Synchronize database.
         """
 
-        self._db.sync()
+        self._speeches_by_date.sync()
+
 
 miner = DiscourseMiner()
-miner.read_date('8/11/2016')
+miner.read_interval('8/11/2016')
 print(miner.deputies())

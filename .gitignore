@@ -1,5 +1,27 @@
-.venv
-*.json
-*.log
-*.swp
-*.swo
+# Cached builds
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dll
+*.egg
+*.egg-info/
+*.db
+
+# Build directories
+docs/_build/
+build/
+dist/
+
+# Python-boilerplate auto generated files
+src/tenhodito_nlp/__meta__.py
+
+# IDEs
+.idea/
+
+# Testing and temporary files
+.tox/
+
+# "Vendorized" pygov_br
+src/pygov_br
